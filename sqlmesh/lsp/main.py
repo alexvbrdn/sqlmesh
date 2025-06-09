@@ -29,19 +29,39 @@ from sqlmesh.lsp.custom import (
     ALL_MODELS_FEATURE,
     ALL_MODELS_FOR_RENDER_FEATURE,
     RENDER_MODEL_FEATURE,
+    SUPPORTED_METHODS_FEATURE,
+    FORMAT_PROJECT_FEATURE,
     AllModelsRequest,
     AllModelsResponse,
     AllModelsForRenderRequest,
     AllModelsForRenderResponse,
     RenderModelRequest,
     RenderModelResponse,
+    SupportedMethodsRequest,
+    SupportedMethodsResponse,
+    FormatProjectRequest,
+    FormatProjectResponse,
+    CustomMethod,
 )
+from sqlmesh.lsp.hints import get_hints
 from sqlmesh.lsp.reference import (
+    LSPCteReference,
+    LSPModelReference,
     get_references,
+    get_all_references,
 )
 from sqlmesh.lsp.uri import URI
 from web.server.api.endpoints.lineage import column_lineage, model_lineage
 from web.server.api.endpoints.models import get_models
+
+SUPPORTED_CUSTOM_METHODS = [
+    ALL_MODELS_FEATURE,
+    RENDER_MODEL_FEATURE,
+    ALL_MODELS_FOR_RENDER_FEATURE,
+    API_FEATURE,
+    SUPPORTED_METHODS_FEATURE,
+    FORMAT_PROJECT_FEATURE,
+]
 
 
 class SQLMeshLanguageServer:
@@ -103,23 +123,33 @@ class SQLMeshLanguageServer:
                                     loaded_sqlmesh_message(ls, folder_path)
                                     return  # Exit after successfully loading any config
                                 except Exception as e:
-                                    ls.show_message(
+                                    ls.log_trace(
                                         f"Error loading context from {config_path}: {e}",
-                                        types.MessageType.Warning,
                                     )
             except Exception as e:
-                ls.show_message(f"Error initializing SQLMesh context: {e}", types.MessageType.Error)
+                ls.log_trace(
+                    f"Error initializing SQLMesh context: {e}",
+                )
 
         @self.server.feature(ALL_MODELS_FEATURE)
         def all_models(ls: LanguageServer, params: AllModelsRequest) -> AllModelsResponse:
             uri = URI(params.textDocument.uri)
+
+            # Get the document content
+            content = None
+            try:
+                document = ls.workspace.get_text_document(params.textDocument.uri)
+                content = document.source
+            except Exception:
+                pass
+
             try:
                 context = self._context_get_or_load(uri)
-                return context.get_autocomplete(uri)
+                return context.get_autocomplete(uri, content)
             except Exception as e:
                 from sqlmesh.lsp.completions import get_sql_completions
 
-                return get_sql_completions(None, URI(params.textDocument.uri))
+                return get_sql_completions(None, URI(params.textDocument.uri), content)
 
         @self.server.feature(RENDER_MODEL_FEATURE)
         def render_model(ls: LanguageServer, params: RenderModelRequest) -> RenderModelResponse:
@@ -139,6 +169,39 @@ class SQLMeshLanguageServer:
             return AllModelsForRenderResponse(
                 models=self.lsp_context.list_of_models_for_rendering()
             )
+
+        @self.server.feature(SUPPORTED_METHODS_FEATURE)
+        def supported_methods(
+            ls: LanguageServer, params: SupportedMethodsRequest
+        ) -> SupportedMethodsResponse:
+            """Return all supported custom LSP methods."""
+            return SupportedMethodsResponse(
+                methods=[
+                    CustomMethod(
+                        name=name,
+                    )
+                    for name in SUPPORTED_CUSTOM_METHODS
+                ]
+            )
+
+        @self.server.feature(FORMAT_PROJECT_FEATURE)
+        def format_project(
+            ls: LanguageServer, params: FormatProjectRequest
+        ) -> FormatProjectResponse:
+            """Format all models in the current project."""
+            try:
+                if self.lsp_context is None:
+                    current_path = Path.cwd()
+                    self._ensure_context_in_folder(current_path)
+                if self.lsp_context is None:
+                    raise RuntimeError("No context found")
+
+                # Call the format method on the context
+                self.lsp_context.context.format()
+                return FormatProjectResponse()
+            except Exception as e:
+                ls.log_trace(f"Error formatting project: {e}")
+                return FormatProjectResponse()
 
         @self.server.feature(API_FEATURE)
         def api(ls: LanguageServer, request: ApiRequest) -> t.Dict[str, t.Any]:
@@ -310,7 +373,7 @@ class SQLMeshLanguageServer:
                 if not references:
                     return None
                 reference = references[0]
-                if not reference.markdown_description:
+                if isinstance(reference, LSPCteReference) or not reference.markdown_description:
                     return None
                 return types.Hover(
                     contents=types.MarkupContent(
@@ -321,8 +384,29 @@ class SQLMeshLanguageServer:
                 )
 
             except Exception as e:
-                ls.show_message(f"Error getting hover information: {e}", types.MessageType.Error)
+                ls.log_trace(
+                    f"Error getting hover information: {e}",
+                )
                 return None
+
+        @self.server.feature(types.TEXT_DOCUMENT_INLAY_HINT)
+        def inlay_hint(
+            ls: LanguageServer, params: types.InlayHintParams
+        ) -> t.List[types.InlayHint]:
+            """Implement type hints for sql columns as inlay hints"""
+            try:
+                uri = URI(params.text_document.uri)
+                self._ensure_context_for_document(uri)
+                if self.lsp_context is None:
+                    raise RuntimeError(f"No context found for document: {uri}")
+
+                start_line = params.range.start.line
+                end_line = params.range.end.line
+                hints = get_hints(self.lsp_context, uri, start_line, end_line)
+                return hints
+
+            except Exception as e:
+                return []
 
         @self.server.feature(types.TEXT_DOCUMENT_DEFINITION)
         def goto_definition(
@@ -339,8 +423,8 @@ class SQLMeshLanguageServer:
                 references = get_references(self.lsp_context, uri, params.position)
                 location_links = []
                 for reference in references:
-                    # Use target_range if available (for CTEs), otherwise default to start of file
-                    if reference.target_range:
+                    # Use target_range if available (CTEs, Macros), otherwise default to start of file
+                    if not isinstance(reference, LSPModelReference):
                         target_range = reference.target_range
                         target_selection_range = reference.target_range
                     else:
@@ -366,6 +450,28 @@ class SQLMeshLanguageServer:
                 ls.show_message(f"Error getting references: {e}", types.MessageType.Error)
                 return []
 
+        @self.server.feature(types.TEXT_DOCUMENT_REFERENCES)
+        def find_references(
+            ls: LanguageServer, params: types.ReferenceParams
+        ) -> t.Optional[t.List[types.Location]]:
+            """Find all references of a symbol (supporting CTEs, models for now)"""
+            try:
+                uri = URI(params.text_document.uri)
+                self._ensure_context_for_document(uri)
+                document = ls.workspace.get_text_document(params.text_document.uri)
+                if self.lsp_context is None:
+                    raise RuntimeError(f"No context found for document: {document.path}")
+
+                all_references = get_all_references(self.lsp_context, uri, params.position)
+
+                # Convert references to Location objects
+                locations = [types.Location(uri=ref.uri, range=ref.range) for ref in all_references]
+
+                return locations if locations else None
+            except Exception as e:
+                ls.show_message(f"Error getting locations: {e}", types.MessageType.Error)
+                return None
+
         @self.server.feature(types.TEXT_DOCUMENT_DIAGNOSTIC)
         def diagnostic(
             ls: LanguageServer, params: types.DocumentDiagnosticParams
@@ -389,7 +495,9 @@ class SQLMeshLanguageServer:
                     result_id=str(result_id),
                 )
             except Exception as e:
-                ls.show_message(f"Error getting diagnostics: {e}", types.MessageType.Error)
+                ls.log_trace(
+                    f"Error getting diagnostics: {e}",
+                )
                 return types.RelatedFullDocumentDiagnosticReport(
                     kind=types.DocumentDiagnosticReportKind.Full,
                     items=[],
@@ -452,8 +560,8 @@ class SQLMeshLanguageServer:
                 return types.WorkspaceDiagnosticReport(items=items)
 
             except Exception as e:
-                ls.show_message(
-                    f"Error getting workspace diagnostics: {e}", types.MessageType.Error
+                ls.log_trace(
+                    f"Error getting workspace diagnostics: {e}",
                 )
                 return types.WorkspaceDiagnosticReport(items=[])
 
@@ -466,8 +574,16 @@ class SQLMeshLanguageServer:
                 uri = URI(params.text_document.uri)
                 context = self._context_get_or_load(uri)
 
+                # Get the document content
+                content = None
+                try:
+                    document = ls.workspace.get_text_document(params.text_document.uri)
+                    content = document.source
+                except Exception:
+                    pass
+
                 # Get completions using the existing completions module
-                completion_response = context.get_autocomplete(uri)
+                completion_response = context.get_autocomplete(uri, content)
 
                 completion_items = []
                 # Add model completions
@@ -613,8 +729,24 @@ class SQLMeshLanguageServer:
     ) -> t.Optional[types.Diagnostic]:
         if diagnostic.model._path is None:
             return None
-        with open(diagnostic.model._path, "r", encoding="utf-8") as file:
-            lines = file.readlines()
+        if not diagnostic.violation_range:
+            with open(diagnostic.model._path, "r", encoding="utf-8") as file:
+                lines = file.readlines()
+            range = types.Range(
+                start=types.Position(line=0, character=0),
+                end=types.Position(line=len(lines) - 1, character=len(lines[-1])),
+            )
+        else:
+            range = types.Range(
+                start=types.Position(
+                    line=diagnostic.violation_range.start.line,
+                    character=diagnostic.violation_range.start.character,
+                ),
+                end=types.Position(
+                    line=diagnostic.violation_range.end.line,
+                    character=diagnostic.violation_range.end.character,
+                ),
+            )
 
         # Get rule definition location for diagnostics link
         rule_location = diagnostic.rule.get_definition_location()
@@ -623,10 +755,7 @@ class SQLMeshLanguageServer:
 
         # Use URI format to create a link for "related information"
         return types.Diagnostic(
-            range=types.Range(
-                start=types.Position(line=0, character=0),
-                end=types.Position(line=len(lines), character=len(lines[-1])),
-            ),
+            range=range,
             message=diagnostic.violation_msg,
             severity=types.DiagnosticSeverity.Error
             if diagnostic.violation_type == "error"

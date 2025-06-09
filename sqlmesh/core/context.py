@@ -88,7 +88,7 @@ from sqlmesh.core.notification_target import (
     NotificationTarget,
     NotificationTargetManager,
 )
-from sqlmesh.core.plan import Plan, PlanBuilder, SnapshotIntervals
+from sqlmesh.core.plan import Plan, PlanBuilder, SnapshotIntervals, PlanExplainer
 from sqlmesh.core.plan.definition import UserProvidedFlags
 from sqlmesh.core.reference import ReferenceGraph
 from sqlmesh.core.scheduler import Scheduler, CompletionStatus
@@ -1216,6 +1216,7 @@ class GenericContext(BaseContext, t.Generic[C]):
         run: t.Optional[bool] = None,
         diff_rendered: t.Optional[bool] = None,
         skip_linter: t.Optional[bool] = None,
+        explain: t.Optional[bool] = None,
     ) -> Plan:
         """Interactively creates a plan.
 
@@ -1261,6 +1262,7 @@ class GenericContext(BaseContext, t.Generic[C]):
             run: Whether to run latest intervals as part of the plan application.
             diff_rendered: Whether the diff should compare raw vs rendered models
             skip_linter: Linter runs by default so this will skip it if enabled
+            explain: Whether to explain the plan instead of applying it.
 
         Returns:
             The populated Plan object.
@@ -1288,6 +1290,7 @@ class GenericContext(BaseContext, t.Generic[C]):
             run=run,
             diff_rendered=diff_rendered,
             skip_linter=skip_linter,
+            explain=explain,
         )
 
         plan = plan_builder.build()
@@ -1296,6 +1299,9 @@ class GenericContext(BaseContext, t.Generic[C]):
             # Prompts are required if the auto categorization is disabled
             # or if there are any uncategorized snapshots in the plan
             no_prompts = False
+
+        if explain:
+            auto_apply = True
 
         self.console.plan(
             plan_builder,
@@ -1333,6 +1339,7 @@ class GenericContext(BaseContext, t.Generic[C]):
         run: t.Optional[bool] = None,
         diff_rendered: t.Optional[bool] = None,
         skip_linter: t.Optional[bool] = None,
+        explain: t.Optional[bool] = None,
     ) -> PlanBuilder:
         """Creates a plan builder.
 
@@ -1401,7 +1408,7 @@ class GenericContext(BaseContext, t.Generic[C]):
             k: v for k, v in kwargs.items() if v is not None
         }
 
-        skip_tests = skip_tests or False
+        skip_tests = explain or skip_tests or False
         no_gaps = no_gaps or False
         skip_backfill = skip_backfill or False
         empty_backfill = empty_backfill or False
@@ -1485,6 +1492,7 @@ class GenericContext(BaseContext, t.Generic[C]):
             or (backfill_models is not None and not backfill_models),
             ensure_finalized_snapshots=self.config.plan.use_finalized_state,
             diff_rendered=diff_rendered,
+            always_recreate_environment=self.config.plan.always_recreate_environment,
         )
         modified_model_names = {
             *context_diff.modified_snapshots,
@@ -1549,6 +1557,7 @@ class GenericContext(BaseContext, t.Generic[C]):
             interval_end_per_model=max_interval_end_per_model,
             console=self.console,
             user_provided_flags=user_provided_flags,
+            explain=explain or False,
         )
 
     def apply(
@@ -1573,6 +1582,16 @@ class GenericContext(BaseContext, t.Generic[C]):
             return
         if plan.uncategorized:
             raise UncategorizedPlanError("Can't apply a plan with uncategorized changes.")
+
+        if plan.explain:
+            explainer = PlanExplainer(
+                state_reader=self.state_reader,
+                default_catalog=self.default_catalog,
+                console=self.console,
+            )
+            explainer.evaluate(plan.to_evaluatable())
+            return
+
         self.notification_target_manager.notify(
             NotificationEvent.APPLY_START,
             environment=plan.environment_naming_info.name,
@@ -1660,6 +1679,7 @@ class GenericContext(BaseContext, t.Generic[C]):
         skip_grain_check: bool = False,
         warn_grain_check: bool = False,
         temp_schema: t.Optional[str] = None,
+        schema_diff_ignore_case: bool = False,
     ) -> t.List[TableDiff]:
         """Show a diff between two tables.
 
@@ -1681,6 +1701,12 @@ class GenericContext(BaseContext, t.Generic[C]):
         Returns:
             The list of TableDiff objects containing schema and summary differences.
         """
+
+        if "|" in source or "|" in target:
+            raise ConfigError(
+                "Cross-database table diffing is available in Tobiko Cloud. Read more here: "
+                "https://sqlmesh.readthedocs.io/en/stable/guides/tablediff/#diffing-tables-or-views-across-gateways"
+            )
 
         table_diffs: t.List[TableDiff] = []
 
@@ -1777,6 +1803,7 @@ class GenericContext(BaseContext, t.Generic[C]):
                             show=show,
                             temp_schema=temp_schema,
                             skip_grain_check=skip_grain_check,
+                            schema_diff_ignore_case=schema_diff_ignore_case,
                         ),
                         tasks_num=tasks_num,
                     )
@@ -1802,6 +1829,7 @@ class GenericContext(BaseContext, t.Generic[C]):
                     on=on,
                     skip_columns=skip_columns,
                     where=where,
+                    schema_diff_ignore_case=schema_diff_ignore_case,
                 )
             ]
 
@@ -1826,6 +1854,7 @@ class GenericContext(BaseContext, t.Generic[C]):
         show: bool = True,
         temp_schema: t.Optional[str] = None,
         skip_grain_check: bool = False,
+        schema_diff_ignore_case: bool = False,
     ) -> TableDiff:
         self.console.start_table_diff_model_progress(model.name)
 
@@ -1841,6 +1870,7 @@ class GenericContext(BaseContext, t.Generic[C]):
             target=target,
             source_alias=source_alias,
             target_alias=target_alias,
+            schema_diff_ignore_case=schema_diff_ignore_case,
         )
 
         if show:
@@ -1864,6 +1894,7 @@ class GenericContext(BaseContext, t.Generic[C]):
         model: t.Optional[Model] = None,
         skip_columns: t.Optional[t.List[str]] = None,
         where: t.Optional[str | exp.Condition] = None,
+        schema_diff_ignore_case: bool = False,
     ) -> TableDiff:
         if not on:
             raise SQLMeshError(
@@ -1883,6 +1914,7 @@ class GenericContext(BaseContext, t.Generic[C]):
             decimals=decimals,
             model_name=model.name if model else None,
             model_dialect=model.dialect if model else None,
+            schema_diff_ignore_case=schema_diff_ignore_case,
         )
 
     @python_api_analytics
@@ -2602,6 +2634,7 @@ class GenericContext(BaseContext, t.Generic[C]):
         force_no_diff: bool = False,
         ensure_finalized_snapshots: bool = False,
         diff_rendered: bool = False,
+        always_recreate_environment: bool = False,
     ) -> ContextDiff:
         environment = Environment.sanitize_name(environment)
         if force_no_diff:
@@ -2619,6 +2652,7 @@ class GenericContext(BaseContext, t.Generic[C]):
             environment_statements=self._environment_statements,
             gateway_managed_virtual_layer=self.config.gateway_managed_virtual_layer,
             infer_python_dependencies=self.config.infer_python_dependencies,
+            always_recreate_environment=always_recreate_environment,
         )
 
     def _destroy(self) -> None:

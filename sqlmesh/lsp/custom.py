@@ -72,3 +72,49 @@ class AllModelsForRenderResponse(PydanticModel):
     """
 
     models: t.List[ModelForRendering]
+
+
+SUPPORTED_METHODS_FEATURE = "sqlmesh/supported_methods"
+
+
+class SupportedMethodsRequest(PydanticModel):
+    """
+    Request to get all supported custom LSP methods.
+    """
+
+    pass
+
+
+class CustomMethod(PydanticModel):
+    """
+    Information about a custom LSP method.
+    """
+
+    name: str
+
+
+class SupportedMethodsResponse(PydanticModel):
+    """
+    Response containing all supported custom LSP methods.
+    """
+
+    methods: t.List[CustomMethod]
+
+
+FORMAT_PROJECT_FEATURE = "sqlmesh/format_project"
+
+
+class FormatProjectRequest(PydanticModel):
+    """
+    Request to format all models in the current project.
+    """
+
+    pass
+
+
+class FormatProjectResponse(PydanticModel):
+    """
+    Response to format project request.
+    """
+
+    pass
