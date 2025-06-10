@@ -42,6 +42,7 @@ from sqlmesh.utils.date import (
     yesterday_ds,
     to_timestamp,
     time_like_to_str,
+    is_relative,
 )
 from sqlmesh.utils.errors import NoChangesPlanError, PlanError
 
@@ -139,7 +140,7 @@ class PlanBuilder:
         self._include_unmodified = include_unmodified
         self._restate_models = set(restate_models) if restate_models is not None else None
         self._effective_from = effective_from
-        self._execution_time = execution_time
+        self._execution_time = execution_time or now()
         self._backfill_models = backfill_models
         self._end = end or default_end
         self._apply = apply
@@ -176,19 +177,17 @@ class PlanBuilder:
 
     @property
     def start(self) -> t.Optional[TimeLike]:
-        if self._start and self._execution_time:
+        if self._start and is_relative(self._start):
+            # only do this for relative expressions otherwise inclusive date strings like '2020-01-01' can be turned into exclusive timestamps eg '2020-01-01 00:00:00'
             return to_datetime(self._start, relative_base=to_datetime(self._execution_time))
         return self._start
 
     @property
     def end(self) -> t.Optional[TimeLike]:
-        if self._end and self._execution_time:
+        if self._end and is_relative(self._end):
+            # only do this for relative expressions otherwise inclusive date strings like '2020-01-01' can be turned into exclusive timestamps eg '2020-01-01 00:00:00'
             return to_datetime(self._end, relative_base=to_datetime(self._execution_time))
         return self._end
-
-    @property
-    def execution_time(self) -> TimeLike:
-        return self._execution_time or now()
 
     def set_start(self, new_start: TimeLike) -> PlanBuilder:
         self._start = new_start
@@ -274,7 +273,8 @@ class PlanBuilder:
         )
 
         restatements = self._build_restatements(
-            dag, earliest_interval_start(self._context_diff.snapshots.values(), self.execution_time)
+            dag,
+            earliest_interval_start(self._context_diff.snapshots.values(), self._execution_time),
         )
         models_to_backfill = self._build_models_to_backfill(dag, restatements)
 
@@ -307,7 +307,7 @@ class PlanBuilder:
             selected_models_to_backfill=self._backfill_models,
             models_to_backfill=models_to_backfill,
             effective_from=self._effective_from,
-            execution_time=self.execution_time,
+            execution_time=self._execution_time,
             end_bounded=self._end_bounded,
             ensure_finalized_snapshots=self._ensure_finalized_snapshots,
             user_provided_flags=self._user_provided_flags,
@@ -764,9 +764,9 @@ class PlanBuilder:
                 )
 
         if end := self.end:
-            if to_datetime(end) > to_datetime(self.execution_time):
+            if to_datetime(end) > to_datetime(self._execution_time):
                 raise PlanError(
-                    f"Plan end date: '{time_like_to_str(end)}' cannot be in the future (execution time: '{time_like_to_str(self.execution_time)}')"
+                    f"Plan end date: '{time_like_to_str(end)}' cannot be in the future (execution time: '{time_like_to_str(self._execution_time)}')"
                 )
 
     def _ensure_no_forward_only_revert(self) -> None:
