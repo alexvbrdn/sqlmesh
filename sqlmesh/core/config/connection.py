@@ -88,6 +88,8 @@ def _get_engine_import_validator(
 
 class ConnectionConfig(abc.ABC, BaseConfig):
     type_: str
+    dialect: str
+    display_name: str
     concurrent_tasks: int
     register_comments: bool
     pre_ping: bool
@@ -464,6 +466,8 @@ class MotherDuckConnectionConfig(BaseDuckDBConnectionConfig):
     """Configuration for the MotherDuck connection."""
 
     type_: t.Literal["motherduck"] = Field(alias="type", default="motherduck")
+    dialect: t.Literal["duckdb"] = "duckdb"
+    display_name: t.Literal["MotherDuck"] = "MotherDuck"
 
     @property
     def _connection_kwargs_keys(self) -> t.Set[str]:
@@ -488,6 +492,8 @@ class DuckDBConnectionConfig(BaseDuckDBConnectionConfig):
     """Configuration for the DuckDB connection."""
 
     type_: t.Literal["duckdb"] = Field(alias="type", default="duckdb")
+    dialect: t.Literal["duckdb"] = "duckdb"
+    display_name: t.Literal["DuckDB"] = "DuckDB"
 
 
 class SnowflakeConnectionConfig(ConnectionConfig):
@@ -538,6 +544,8 @@ class SnowflakeConnectionConfig(ConnectionConfig):
     session_parameters: t.Optional[dict] = None
 
     type_: t.Literal["snowflake"] = Field(alias="type", default="snowflake")
+    dialect: t.Literal["snowflake"] = "snowflake"
+    display_name: t.Literal["Snowflake"] = "Snowflake"
 
     _concurrent_tasks_validator = concurrent_tasks_validator
     _engine_import_validator = _get_engine_import_validator("snowflake", "snowflake")
@@ -731,6 +739,8 @@ class DatabricksConnectionConfig(ConnectionConfig):
     pre_ping: t.Literal[False] = False
 
     type_: t.Literal["databricks"] = Field(alias="type", default="databricks")
+    dialect: t.Literal["databricks"] = "databricks"
+    display_name: t.Literal["Databricks"] = "Databricks"
 
     _concurrent_tasks_validator = concurrent_tasks_validator
     _http_headers_validator = http_headers_validator
@@ -986,6 +996,8 @@ class BigQueryConnectionConfig(ConnectionConfig):
     pre_ping: t.Literal[False] = False
 
     type_: t.Literal["bigquery"] = Field(alias="type", default="bigquery")
+    dialect: t.Literal["bigquery"] = "bigquery"
+    display_name: t.Literal["BigQuery"] = "BigQuery"
 
     _engine_import_validator = _get_engine_import_validator("google.cloud.bigquery", "bigquery")
 
@@ -1127,6 +1139,9 @@ class GCPPostgresConnectionConfig(ConnectionConfig):
     scopes: t.Tuple[str, ...] = ("https://www.googleapis.com/auth/sqlservice.admin",)
     driver: str = "pg8000"
     type_: t.Literal["gcp_postgres"] = Field(alias="type", default="gcp_postgres")
+    dialect: t.Literal["postgres"] = "postgres"
+    display_name: t.Literal["GCP Postgres"] = "GCP Postgres"
+
     concurrent_tasks: int = 4
     register_comments: bool = True
     pre_ping: bool = True
@@ -1261,6 +1276,8 @@ class RedshiftConnectionConfig(ConnectionConfig):
     pre_ping: bool = False
 
     type_: t.Literal["redshift"] = Field(alias="type", default="redshift")
+    dialect: t.Literal["redshift"] = "redshift"
+    display_name: t.Literal["Redshift"] = "Redshift"
 
     _engine_import_validator = _get_engine_import_validator("redshift_connector", "redshift")
 
@@ -1322,6 +1339,8 @@ class PostgresConnectionConfig(ConnectionConfig):
     pre_ping: bool = True
 
     type_: t.Literal["postgres"] = Field(alias="type", default="postgres")
+    dialect: t.Literal["postgres"] = "postgres"
+    display_name: t.Literal["Postgres"] = "Postgres"
 
     _engine_import_validator = _get_engine_import_validator("psycopg2", "postgres")
 
@@ -1375,6 +1394,8 @@ class MySQLConnectionConfig(ConnectionConfig):
     pre_ping: bool = True
 
     type_: t.Literal["mysql"] = Field(alias="type", default="mysql")
+    dialect: t.Literal["mysql"] = "mysql"
+    display_name: t.Literal["MySQL"] = "MySQL"
 
     _engine_import_validator = _get_engine_import_validator("pymysql", "mysql")
 
@@ -1427,6 +1448,8 @@ class MSSQLConnectionConfig(ConnectionConfig):
     pre_ping: bool = True
 
     type_: t.Literal["mssql"] = Field(alias="type", default="mssql")
+    dialect: t.Literal["tsql"] = "tsql"
+    display_name: t.Literal["MSSQL"] = "MSSQL"
 
     _engine_import_validator = _get_engine_import_validator("pymssql", "mssql")
 
@@ -1464,6 +1487,8 @@ class MSSQLConnectionConfig(ConnectionConfig):
 
 class AzureSQLConnectionConfig(MSSQLConnectionConfig):
     type_: t.Literal["azuresql"] = Field(alias="type", default="azuresql")  # type: ignore
+    dialect: t.Literal["tsql"] = "tsql"
+    display_name: t.Literal["Azure SQL"] = "Azure SQL"  # type: ignore
 
     @property
     def _extra_engine_config(self) -> t.Dict[str, t.Any]:
@@ -1484,6 +1509,8 @@ class SparkConnectionConfig(ConnectionConfig):
     pre_ping: t.Literal[False] = False
 
     type_: t.Literal["spark"] = Field(alias="type", default="spark")
+    dialect: t.Literal["spark"] = "spark"
+    display_name: t.Literal["Spark"] = "Spark"
 
     _engine_import_validator = _get_engine_import_validator("pyspark", "spark")
 
@@ -1602,6 +1629,8 @@ class TrinoConnectionConfig(ConnectionConfig):
     pre_ping: t.Literal[False] = False
 
     type_: t.Literal["trino"] = Field(alias="type", default="trino")
+    dialect: t.Literal["trino"] = "trino"
+    display_name: t.Literal["Trino"] = "Trino"
 
     _engine_import_validator = _get_engine_import_validator("trino", "trino")
 
@@ -1762,6 +1791,8 @@ class ClickhouseConnectionConfig(ConnectionConfig):
     connection_pool_options: t.Optional[t.Dict[str, t.Any]] = None
 
     type_: t.Literal["clickhouse"] = Field(alias="type", default="clickhouse")
+    dialect: t.Literal["clickhouse"] = "clickhouse"
+    display_name: t.Literal["ClickHouse"] = "ClickHouse"
 
     _engine_import_validator = _get_engine_import_validator("clickhouse_connect", "clickhouse")
 
@@ -1886,6 +1917,8 @@ class AthenaConnectionConfig(ConnectionConfig):
     pre_ping: t.Literal[False] = False
 
     type_: t.Literal["athena"] = Field(alias="type", default="athena")
+    dialect: t.Literal["athena"] = "athena"
+    display_name: t.Literal["Athena"] = "Athena"
 
     _engine_import_validator = _get_engine_import_validator("pyathena", "athena")
 
@@ -1954,6 +1987,8 @@ class RisingwaveConnectionConfig(ConnectionConfig):
     pre_ping: bool = True
 
     type_: t.Literal["risingwave"] = Field(alias="type", default="risingwave")
+    dialect: t.Literal["risingwave"] = "risingwave"
+    display_name: t.Literal["RisingWave"] = "RisingWave"
 
     _engine_import_validator = _get_engine_import_validator("psycopg2", "risingwave")
 
@@ -1991,6 +2026,34 @@ class RisingwaveConnectionConfig(ConnectionConfig):
 CONNECTION_CONFIG_TO_TYPE = {
     # Map all subclasses of ConnectionConfig to the value of their `type_` field.
     tpe.all_field_infos()["type_"].default: tpe
+    for tpe in subclasses(
+        __name__,
+        ConnectionConfig,
+        exclude=(ConnectionConfig, BaseDuckDBConnectionConfig),
+    )
+}
+
+CONNECTION_CONFIG_TO_TYPE = {
+    # Map all subclasses of ConnectionConfig to the value of their `type_` field.
+    tpe.all_field_infos()["type_"].default: tpe
+    for tpe in subclasses(
+        __name__,
+        ConnectionConfig,
+        exclude=(ConnectionConfig, BaseDuckDBConnectionConfig),
+    )
+}
+
+DIALECT_TO_TYPE = {
+    tpe.all_field_infos()["type_"].default: tpe.all_field_infos()["dialect"].default
+    for tpe in subclasses(
+        __name__,
+        ConnectionConfig,
+        exclude=(ConnectionConfig, BaseDuckDBConnectionConfig),
+    )
+}
+
+DISPLAY_NAME_TO_TYPE = {
+    tpe.all_field_infos()["type_"].default: tpe.all_field_infos()["display_name"].default
     for tpe in subclasses(
         __name__,
         ConnectionConfig,
